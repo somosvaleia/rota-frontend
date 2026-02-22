@@ -9,5 +9,5 @@ export default function AuthCallback() {
     })();
   }, []);
 
-  return <div className="p-6 text-zinc-200">Validando acesso…</div>;
+  return <div style={{ padding: 24 }}>Validando acesso…</div>;
 }
