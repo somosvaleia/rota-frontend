@@ -1,21 +1,28 @@
-import { useEffect, useState } from "react";
-import Login from "./pages/Login";
-import Dashboard from "./pages/Dashboard";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import Login from "./pages/Login.jsx";
+import Dashboard from "./pages/Dashboard.jsx";
+import AuthCallback from "./pages/AuthCallback.jsx";
+import RequireAuth from "./components/RequireAuth.jsx";
 
 export default function App() {
-  const [user, setUser] = useState(null);
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
 
-  useEffect(() => {
-    const saved = localStorage.getItem("rota_user");
-    if (saved) setUser(JSON.parse(saved));
-  }, []);
+        <Route
+          path="/dashboard"
+          element={
+            <RequireAuth>
+              <Dashboard />
+            </RequireAuth>
+          }
+        />
 
-  function logout() {
-    localStorage.removeItem("rota_user");
-    setUser(null);
-  }
-
-  if (!user) return <Login onLogin={setUser} />;
-
-  return <Dashboard user={user} onLogout={logout} />;
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
 }
