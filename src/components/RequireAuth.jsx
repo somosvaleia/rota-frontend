@@ -28,12 +28,12 @@ export default function RequireAuth({ children }) {
 
     return () => {
       mounted = false;
-      sub.subscription.unsubscribe();
+      sub?.subscription?.unsubscribe?.();
     };
   }, []);
 
-  if (!ready) return <div className="p-6 text-zinc-200">Carregando…</div>;
-  if (!ok) return <div className="p-6 text-zinc-200">Redirecionando…</div>;
+  if (!ready) return <div style={{ padding: 24 }}>Carregando…</div>;
+  if (!ok) return <div style={{ padding: 24 }}>Redirecionando…</div>;
 
   return children;
 }
