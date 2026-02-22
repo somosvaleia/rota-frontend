@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { supabase } from "../lib/supabase";
 
 const CATEGORIAS = [
   { key: "bebidas", label: "Bebidas (alcoólicas e não alcoólicas, água, refri, sucos etc)" },
@@ -22,7 +23,7 @@ const CATEGORIAS = [
   { key: "salgados", label: "Salgados e embutidos (mortadela, salame, kit feijoada, charque, bacon etc)" },
   { key: "hortifruti", label: "Hortifruti (tomate, batata, banana, laranja, macaxeira, cenoura, beterraba etc)" },
   { key: "calcados", label: "Calçados (sandália, sapatos etc)" },
-  { key: "adega", label: "Adega (vinhos, espumante, wisk(y), vodka, cachaça etc)" },
+  { key: "adega", label: "Adega (vinhos, espumante, wisk(y), vodka, cachaça etc)" }
 ];
 
 function emptyCategorias() {
@@ -33,72 +34,87 @@ function emptyCategorias() {
   return obj;
 }
 
-export default function Dashboard({ user, onLogout }) {
-  const [projetos, setProjetos] = useState([
-    {
-      id: "p1",
-      nome: "Projeto Mercado 1",
-      dados: {
-        nomeMercado: "",
-        cidade: "",
-        observacoes: "",
-        fotosLocal: [], // File[]
-        plantaBaixa: null, // File
-        categorias: emptyCategorias(),
-      },
-    },
-  ]);
+function baseProjeto() {
+  return {
+    nomeMercado: "",
+    cidade: "",
+    observacoes: "",
+    fotosLocal: [],         // File[]
+    plantaBaixa: null,      // File | null
+    terrenoComprimento: "", // string (m)
+    terrenoLargura: "",     // string (m)
+    categorias: emptyCategorias(),
+  };
+}
 
-  const [projetoIdAtual, setProjetoIdAtual] = useState("p1");
+export default function Dashboard() {
+  const [projetos, setProjetos] = useState(() => {
+    const saved = localStorage.getItem("rota_projetos");
+    if (saved) return JSON.parse(saved);
+
+    return [
+      { id: "p1", nome: "Projeto Mercado 1", dados: baseProjeto() }
+    ];
+  });
+
+  const [projetoIdAtual, setProjetoIdAtual] = useState(() => {
+    return localStorage.getItem("rota_projeto_atual") || "p1";
+  });
 
   const projetoAtual = useMemo(
     () => projetos.find((p) => p.id === projetoIdAtual) || projetos[0],
     [projetos, projetoIdAtual]
   );
 
+  function persist(nextProjetos, nextId = projetoIdAtual) {
+    localStorage.setItem("rota_projetos", JSON.stringify(nextProjetos));
+    localStorage.setItem("rota_projeto_atual", nextId);
+  }
+
   function criarProjeto() {
     const novo = {
       id: `p${Date.now()}`,
       nome: "Novo Projeto",
-      dados: {
-        nomeMercado: "",
-        cidade: "",
-        observacoes: "",
-        fotosLocal: [],
-        plantaBaixa: null,
-        categorias: emptyCategorias(),
-      },
+      dados: baseProjeto(),
     };
-    setProjetos((prev) => [...prev, novo]);
+    const next = [...projetos, novo];
+    setProjetos(next);
     setProjetoIdAtual(novo.id);
+    persist(next, novo.id);
   }
 
   function updateDados(patch) {
-    setProjetos((prev) =>
-      prev.map((p) =>
-        p.id === projetoIdAtual
-          ? { ...p, dados: { ...p.dados, ...patch } }
-          : p
-      )
+    const next = projetos.map((p) =>
+      p.id === projetoIdAtual ? { ...p, dados: { ...p.dados, ...patch } } : p
     );
+    setProjetos(next);
+    persist(next);
+  }
+
+  function updateProjetoNome(nome) {
+    const next = projetos.map((p) =>
+      p.id === projetoIdAtual ? { ...p, nome } : p
+    );
+    setProjetos(next);
+    persist(next);
   }
 
   function updateCategoria(key, patch) {
-    setProjetos((prev) =>
-      prev.map((p) => {
-        if (p.id !== projetoIdAtual) return p;
-        return {
-          ...p,
-          dados: {
-            ...p.dados,
-            categorias: {
-              ...p.dados.categorias,
-              [key]: { ...p.dados.categorias[key], ...patch },
-            },
+    const next = projetos.map((p) => {
+      if (p.id !== projetoIdAtual) return p;
+      return {
+        ...p,
+        dados: {
+          ...p.dados,
+          categorias: {
+            ...p.dados.categorias,
+            [key]: { ...p.dados.categorias[key], ...patch },
           },
-        };
-      })
-    );
+        },
+      };
+    });
+    setProjetos(next);
+    persist(next);
   }
 
   const selecionadas = useMemo(() => {
@@ -106,85 +122,86 @@ export default function Dashboard({ user, onLogout }) {
     return CATEGORIAS.filter((c) => cats[c.key]?.enabled);
   }, [projetoAtual]);
 
-  // (por enquanto) simula envio; depois ligamos no n8n
-async function salvarProjeto(e) {
-  e.preventDefault();
-
-  const d = projetoAtual.dados;
-
-  const payload = {
-    projetoId: projetoAtual.id,
-    projetoNome: projetoAtual.nome,
-    user: { email: user?.email || "" },
-    nomeMercado: d.nomeMercado,
-    cidade: d.cidade,
-    observacoes: d.observacoes,
-    categorias: Object.fromEntries(
-      Object.entries(d.categorias)
-        .filter(([, v]) => v.enabled)
-        .map(([k, v]) => [k, { prateleiras: v.prateleiras, observacao: v.observacao }])
-    ),
-  };
-
-  // 🔥 Envio multipart: dados + arquivos
-  const formData = new FormData();
-  formData.append("data", JSON.stringify(payload));
-
-  // Fotos do local (múltiplas)
-  (d.fotosLocal || []).forEach((file) => {
-    formData.append("fotosLocal", file, file.name);
-  });
-
-  // Planta baixa (opcional)
-  if (d.plantaBaixa) {
-    formData.append("plantaBaixa", d.plantaBaixa, d.plantaBaixa.name);
+  async function logout() {
+    await supabase.auth.signOut();
+    window.location.href = "/login";
   }
 
-  // ⚠️ TESTE: use webhook-test enquanto o workflow tá em "Listen"
-  const WEBHOOK_URL = "https://api.rota.valeia.space/webhook-test/rota/projeto";
+  async function salvarProjeto(e) {
+    e.preventDefault();
 
-  try {
-    const res = await fetch(WEBHOOK_URL, {
-      method: "POST",
-      body: formData,
+    const d = projetoAtual.dados;
+
+    const payload = {
+      projetoId: projetoAtual.id,
+      projetoNome: projetoAtual.nome,
+
+      nomeMercado: d.nomeMercado,
+      cidade: d.cidade,
+      observacoes: d.observacoes,
+
+      terreno: {
+        comprimento_m: d.terrenoComprimento,
+        largura_m: d.terrenoLargura,
+      },
+
+      categorias: Object.fromEntries(
+        Object.entries(d.categorias)
+          .filter(([, v]) => v.enabled)
+          .map(([k, v]) => [k, { prateleiras: v.prateleiras, observacao: v.observacao }])
+      ),
+    };
+
+    const formData = new FormData();
+    formData.append("data", JSON.stringify(payload));
+
+    (d.fotosLocal || []).forEach((file) => {
+      formData.append("fotosLocal", file, file.name);
     });
 
-    const text = await res.text();
-    alert(`Enviado pro n8n ✅\nStatus: ${res.status}\n\nResposta:\n${text}`);
-  } catch (err) {
-    console.error(err);
-    alert("Deu ruim no envio 😵\nOlha o console (F12) pra ver o erro.");
+    if (d.plantaBaixa) {
+      formData.append("plantaBaixa", d.plantaBaixa, d.plantaBaixa.name);
+    }
+
+    const WEBHOOK_URL = "https://api.rota.valeia.space/webhook-test/rota/projeto";
+
+    try {
+      const res = await fetch(WEBHOOK_URL, { method: "POST", body: formData });
+      const text = await res.text();
+      alert(`Enviado pro n8n ✅\nStatus: ${res.status}\n\nResposta:\n${text}`);
+    } catch (err) {
+      console.error(err);
+      alert("Deu ruim no envio.\nOlha o console (F12).");
+    }
   }
-}
 
   return (
-    <div className="h-screen flex bg-zinc-950 text-white">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex">
       {/* Sidebar */}
-      <aside className="w-72 border-r border-zinc-800 flex flex-col">
-        <div className="p-4 border-b border-zinc-800">
-          <div className="text-lg font-semibold">Rota</div>
-          <div className="text-xs text-zinc-400">{user?.email}</div>
-        </div>
-
+      <aside className="w-72 border-r border-zinc-900 bg-zinc-950/60">
         <div className="p-4">
+          <div className="text-lg font-bold">Rota</div>
+          <div className="text-xs text-zinc-400 mt-1">Projetos</div>
+
           <button
             onClick={criarProjeto}
-            className="w-full rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium hover:bg-blue-500"
+            className="mt-3 w-full rounded-xl bg-white text-zinc-900 px-4 py-2 text-sm font-medium hover:bg-zinc-100"
           >
             + Novo projeto
           </button>
         </div>
 
-        <div className="flex-1 overflow-auto">
+        <div className="px-2">
           {projetos.map((p) => (
             <button
               key={p.id}
-              onClick={() => setProjetoIdAtual(p.id)}
+              onClick={() => {
+                setProjetoIdAtual(p.id);
+                localStorage.setItem("rota_projeto_atual", p.id);
+              }}
               className={[
                 "w-full text-left px-4 py-3 text-sm border-b border-zinc-900",
-                projetoAtual?.id === p.id
-                  ? "bg-zinc-900/70"
-                  : "hover:bg-zinc-900/40",
+                projetoAtual?.id === p.id ? "bg-zinc-900/70" : "hover:bg-zinc-900/40",
               ].join(" ")}
             >
               {p.nome}
@@ -192,10 +209,10 @@ async function salvarProjeto(e) {
           ))}
         </div>
 
-        <div className="p-4 border-t border-zinc-800">
+        <div className="p-4">
           <button
-            onClick={onLogout}
-            className="w-full rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm hover:bg-zinc-900"
+            onClick={logout}
+            className="w-full rounded-xl border border-zinc-800 bg-zinc-900/30 px-4 py-2 text-sm hover:bg-zinc-900/50"
           >
             Sair
           </button>
@@ -203,16 +220,33 @@ async function salvarProjeto(e) {
       </aside>
 
       {/* Área principal */}
-      <main className="flex-1 p-6 overflow-auto">
-        <h2 className="text-xl font-semibold">{projetoAtual?.nome}</h2>
-        <p className="text-zinc-400 mt-2">
-          Preenche aqui as infos do projeto. Depois a gente envia isso pro n8n pra gerar 3D e vídeo drone.
-        </p>
+      <main className="flex-1 p-6">
+        <form onSubmit={salvarProjeto} className="max-w-5xl space-y-4">
+          {/* Cabeçalho */}
+          <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+            <div className="flex-1">
+              <label className="block text-xs text-zinc-400 mb-1">
+                Nome do projeto (você pode renomear)
+              </label>
+              <input
+                value={projetoAtual?.nome || ""}
+                onChange={(e) => updateProjetoNome(e.target.value)}
+                className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-700"
+                placeholder="Ex: Mercado Central - Layout Premium"
+              />
+            </div>
 
-        <form onSubmit={salvarProjeto} className="mt-6 space-y-6">
-          {/* Bloco: dados básicos */}
+            <button
+              type="submit"
+              className="rounded-xl bg-white text-zinc-900 px-4 py-2 text-sm font-medium hover:bg-zinc-100"
+            >
+              Salvar e gerar (teste)
+            </button>
+          </div>
+
+          {/* 1) Dados do mercado */}
           <section className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4">
-            <div className="text-sm font-semibold mb-3">Dados do mercado</div>
+            <div className="text-sm font-semibold mb-3">1) Dados do mercado</div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
@@ -247,9 +281,9 @@ async function salvarProjeto(e) {
             </div>
           </section>
 
-          {/* Bloco: uploads */}
+          {/* 2) Uploads */}
           <section className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4">
-            <div className="text-sm font-semibold mb-3">Uploads</div>
+            <div className="text-sm font-semibold mb-3">2) Uploads</div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
@@ -260,7 +294,9 @@ async function salvarProjeto(e) {
                   type="file"
                   multiple
                   accept="image/*"
-                  onChange={(e) => updateDados({ fotosLocal: Array.from(e.target.files || []) })}
+                  onChange={(e) =>
+                    updateDados({ fotosLocal: Array.from(e.target.files || []) })
+                  }
                   className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm"
                 />
                 <div className="text-xs text-zinc-500 mt-1">
@@ -275,23 +311,61 @@ async function salvarProjeto(e) {
                 <input
                   type="file"
                   accept="image/*,application/pdf"
-                  onChange={(e) => updateDados({ plantaBaixa: (e.target.files && e.target.files[0]) || null })}
+                  onChange={(e) =>
+                    updateDados({
+                      plantaBaixa: (e.target.files && e.target.files[0]) || null,
+                    })
+                  }
                   className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm"
                 />
                 <div className="text-xs text-zinc-500 mt-1">
-                  {projetoAtual.dados.plantaBaixa ? `Arquivo: ${projetoAtual.dados.plantaBaixa.name}` : "Nenhum arquivo selecionado"}
+                  {projetoAtual.dados.plantaBaixa
+                    ? `Arquivo: ${projetoAtual.dados.plantaBaixa.name}`
+                    : "Nenhum arquivo selecionado"}
                 </div>
               </div>
             </div>
           </section>
 
-          {/* Bloco: categorias */}
+          {/* 3) Dimensões do terreno */}
           <section className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4">
-            <div className="text-sm font-semibold mb-3">Categorias e prateleiras</div>
+            <div className="text-sm font-semibold mb-3">3) Dimensões do terreno</div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1">Comprimento (m)</label>
+                <input
+                  value={projetoAtual.dados.terrenoComprimento}
+                  onChange={(e) => updateDados({ terrenoComprimento: e.target.value })}
+                  className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-700"
+                  placeholder="Ex: 30"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1">Largura (m)</label>
+                <input
+                  value={projetoAtual.dados.terrenoLargura}
+                  onChange={(e) => updateDados({ terrenoLargura: e.target.value })}
+                  className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-700"
+                  placeholder="Ex: 18"
+                />
+              </div>
+
+              <div className="md:col-span-2 text-xs text-zinc-500">
+                Se não souber exato, bota aproximado. Isso já ajuda o agente a dimensionar o layout.
+              </div>
+            </div>
+          </section>
+
+          {/* 4) Categorias e prateleiras */}
+          <section className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4">
+            <div className="text-sm font-semibold mb-3">4) Categorias e prateleiras</div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               {CATEGORIAS.map((c) => {
                 const v = projetoAtual.dados.categorias[c.key];
+
                 return (
                   <div key={c.key} className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
                     <label className="flex items-start gap-3 cursor-pointer">
@@ -312,12 +386,16 @@ async function salvarProjeto(e) {
                     {v.enabled ? (
                       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
                         <div>
-                          <label className="block text-xs text-zinc-400 mb-1">Qtde de prateleiras/gôndolas</label>
+                          <label className="block text-xs text-zinc-400 mb-1">
+                            Qtde de prateleiras/gôndolas
+                          </label>
                           <input
                             type="number"
                             min={0}
                             value={v.prateleiras}
-                            onChange={(e) => updateCategoria(c.key, { prateleiras: Number(e.target.value || 0) })}
+                            onChange={(e) =>
+                              updateCategoria(c.key, { prateleiras: Number(e.target.value || 0) })
+                            }
                             className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-700"
                             placeholder="Ex: 4"
                           />
@@ -343,22 +421,6 @@ async function salvarProjeto(e) {
               Categorias selecionadas: {selecionadas.length}
             </div>
           </section>
-
-          {/* Ações */}
-          <div className="flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
-            <div className="text-xs text-zinc-500">
-              *Por enquanto o botão só mostra o payload. Depois a gente envia pro n8n.
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                type="submit"
-                className="rounded-xl bg-white text-zinc-900 px-4 py-2 text-sm font-medium hover:bg-zinc-100"
-              >
-                Salvar e gerar (teste)
-              </button>
-            </div>
-          </div>
         </form>
       </main>
     </div>
