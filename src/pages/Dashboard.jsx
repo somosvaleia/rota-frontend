@@ -40,15 +40,12 @@ function baseProjeto() {
     cidade: "",
     observacoes: "",
 
-    // agora largura/comprimento ficam como parte dos "dados do mercado" também
     terrenoComprimento: "",
     terrenoLargura: "",
 
-    // uploads
     fotosLocal: [], // File[]
     plantaBaixa: null, // File | null
 
-    // submenu novos
     uploadTipo: "mercado", // mercado | gerar_ambiente | refazer_ambiente
     ambienteRefazer: "geral", // geral | entrada | caixas | corredores | hortifruti | acougue | limpeza | outro
     ambienteOutro: "",
@@ -57,6 +54,7 @@ function baseProjeto() {
   };
 }
 
+// mantém como você já usa hoje
 const WEBHOOK_URL = "https://api.rota.valeia.space/webhook/rota/projeto";
 
 export default function Dashboard() {
@@ -67,7 +65,7 @@ export default function Dashboard() {
       {
         id: "p1",
         nome: "Projeto Mercado 1",
-        nomeManual: false, // <- novo: se true, não auto-sincroniza com nomeMercado
+        nomeManual: false,
         dados: baseProjeto(),
       },
     ];
@@ -171,7 +169,6 @@ export default function Dashboard() {
 
   function setMsg(ok, msg) {
     setUi({ busy: false, ok, msg });
-    // some sozinho depois
     window.clearTimeout(window.__rota_msg_to);
     window.__rota_msg_to = window.setTimeout(() => {
       setUi((prev) => ({ ...prev, msg: "" }));
@@ -179,12 +176,11 @@ export default function Dashboard() {
   }
 
   function buildBasePayload(bloco) {
-    const d = projetoAtual.dados;
     return {
       bloco, // "dados_mercado" | "uploads" | "categorias" | "gerar"
       projetoId: projetoAtual.id,
       projetoNome: projetoAtual.nome,
-      user: { email: "" }, // mantém compatível (você pode preencher depois via auth)
+      user: { email: "" }, // compatível
     };
   }
 
@@ -192,7 +188,6 @@ export default function Dashboard() {
     const formData = new FormData();
     formData.append("data", JSON.stringify(payload));
 
-    // files: { fotosLocal: File[], plantaBaixa: File|null }
     if (files.fotosLocal && Array.isArray(files.fotosLocal)) {
       files.fotosLocal.forEach((file) => formData.append("fotosLocal", file, file.name));
     }
@@ -206,7 +201,8 @@ export default function Dashboard() {
     return text;
   }
 
-  async function enviarDadosMercado() {
+  // ✅ ÚNICO ENVIO: manda tudo, mas em blocos (sequencial)
+  async function gerarEmBlocos() {
     const d = projetoAtual.dados;
 
     if (!d.nomeMercado?.trim()) {
@@ -214,9 +210,13 @@ export default function Dashboard() {
       return;
     }
 
-    setUi({ busy: true, ok: true, msg: "Enviando dados do mercado..." });
+    const catsSelecionadas = Object.fromEntries(
+      Object.entries(d.categorias)
+        .filter(([, v]) => v.enabled)
+        .map(([k, v]) => [k, { prateleiras: v.prateleiras, observacao: v.observacao }])
+    );
 
-    const payload = {
+    const payloadDadosMercado = {
       ...buildBasePayload("dados_mercado"),
       nomeMercado: d.nomeMercado,
       cidade: d.cidade,
@@ -227,32 +227,10 @@ export default function Dashboard() {
       },
     };
 
-    try {
-      await postFormData(payload);
-      setMsg(true, "Dados do mercado enviados ✅");
-    } catch (err) {
-      console.error(err);
-      setMsg(false, "Deu erro ao enviar os dados do mercado. Olha o console (F12).");
-    }
-  }
-
-  async function enviarUploads() {
-    const d = projetoAtual.dados;
-
-    const temArquivos =
-      (d.fotosLocal && d.fotosLocal.length > 0) || !!d.plantaBaixa;
-
-    if (!temArquivos) {
-      setMsg(false, "Seleciona pelo menos uma foto ou uma planta baixa, tá? 😅");
-      return;
-    }
-
-    setUi({ busy: true, ok: true, msg: "Enviando uploads..." });
-
-    const payload = {
+    const payloadUploads = {
       ...buildBasePayload("uploads"),
       uploads: {
-        tipo: d.uploadTipo, // mercado | gerar_ambiente | refazer_ambiente
+        tipo: d.uploadTipo,
         ambiente: d.uploadTipo === "refazer_ambiente" ? d.ambienteRefazer : null,
         ambiente_outro:
           d.uploadTipo === "refazer_ambiente" && d.ambienteRefazer === "outro"
@@ -261,55 +239,12 @@ export default function Dashboard() {
       },
     };
 
-    try {
-      await postFormData(payload, {
-        fotosLocal: d.fotosLocal || [],
-        plantaBaixa: d.plantaBaixa || null,
-      });
-      setMsg(true, "Uploads enviados ✅");
-    } catch (err) {
-      console.error(err);
-      setMsg(false, "Deu erro ao enviar uploads. Olha o console (F12).");
-    }
-  }
-
-  async function enviarCategorias() {
-    const d = projetoAtual.dados;
-
-    const catsSelecionadas = Object.fromEntries(
-      Object.entries(d.categorias)
-        .filter(([, v]) => v.enabled)
-        .map(([k, v]) => [k, { prateleiras: v.prateleiras, observacao: v.observacao }])
-    );
-
-    if (Object.keys(catsSelecionadas).length === 0) {
-      setMsg(false, "Marca pelo menos uma categoria antes de enviar, visse? 😅");
-      return;
-    }
-
-    setUi({ busy: true, ok: true, msg: "Enviando categorias..." });
-
-    const payload = {
+    const payloadCategorias = {
       ...buildBasePayload("categorias"),
       categorias: catsSelecionadas,
     };
 
-    try {
-      await postFormData(payload);
-      setMsg(true, "Categorias enviadas ✅");
-    } catch (err) {
-      console.error(err);
-      setMsg(false, "Deu erro ao enviar categorias. Olha o console (F12).");
-    }
-  }
-
-  // botão final (opcional): manda um "gerar" sem arquivos, só pra disparar o agente
-  async function gerarTudo() {
-    const d = projetoAtual.dados;
-
-    setUi({ busy: true, ok: true, msg: "Disparando geração..." });
-
-    const payload = {
+    const payloadGerar = {
       ...buildBasePayload("gerar"),
       nomeMercado: d.nomeMercado,
       cidade: d.cidade,
@@ -326,19 +261,34 @@ export default function Dashboard() {
             ? d.ambienteOutro
             : null,
       },
-      categorias: Object.fromEntries(
-        Object.entries(d.categorias)
-          .filter(([, v]) => v.enabled)
-          .map(([k, v]) => [k, { prateleiras: v.prateleiras, observacao: v.observacao }])
-      ),
+      categorias: catsSelecionadas,
     };
 
     try {
-      await postFormData(payload);
-      setMsg(true, "Geração disparada ✅");
+      setUi({ busy: true, ok: true, msg: "Enviando dados do mercado..." });
+      await postFormData(payloadDadosMercado);
+
+      // uploads só falha se tentar enviar sem nada? aqui a gente deixa enviar do mesmo jeito,
+      // mas se você quiser obrigar, descomenta o bloco abaixo.
+      // const temArquivos = (d.fotosLocal && d.fotosLocal.length > 0) || !!d.plantaBaixa;
+      // if (!temArquivos) throw new Error("Selecione ao menos uma foto ou planta baixa.");
+
+      setUi({ busy: true, ok: true, msg: "Enviando uploads..." });
+      await postFormData(payloadUploads, {
+        fotosLocal: d.fotosLocal || [],
+        plantaBaixa: d.plantaBaixa || null,
+      });
+
+      setUi({ busy: true, ok: true, msg: "Enviando categorias..." });
+      await postFormData(payloadCategorias);
+
+      setUi({ busy: true, ok: true, msg: "Disparando geração..." });
+      await postFormData(payloadGerar);
+
+      setMsg(true, "Sucesso ✅");
     } catch (err) {
       console.error(err);
-      setMsg(false, "Erro ao disparar geração. Olha o console (F12).");
+      setMsg(false, "Deu erro no envio. Olha o console (F12) e o n8n (Executions).");
     }
   }
 
@@ -393,22 +343,10 @@ export default function Dashboard() {
           <div className="mb-4 flex flex-col gap-3">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="text-xl font-semibold">Projeto</div>
-
-              <button
-                onClick={gerarTudo}
-                disabled={ui.busy}
-                className={[
-                  "rounded-xl px-4 py-2 text-sm border",
-                  ui.busy
-                    ? "bg-zinc-900 border-zinc-800 opacity-60 cursor-not-allowed"
-                    : "bg-emerald-600/90 hover:bg-emerald-600 border-emerald-700",
-                ].join(" ")}
-              >
-                {ui.busy ? "Aguarde..." : "Gerar"}
-              </button>
+              {/* ❌ Removido botão aqui (vai pro final da página) */}
             </div>
 
-            {/* Mensagem inline (no lugar do alert) */}
+            {/* Mensagem inline */}
             {ui.msg ? (
               <div
                 className={[
@@ -440,18 +378,7 @@ export default function Dashboard() {
           <section className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4 mb-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="text-sm font-semibold">1) Dados do mercado</div>
-              <button
-                onClick={enviarDadosMercado}
-                disabled={ui.busy}
-                className={[
-                  "rounded-xl px-3 py-2 text-xs border",
-                  ui.busy
-                    ? "bg-zinc-900 border-zinc-800 opacity-60 cursor-not-allowed"
-                    : "bg-zinc-950 hover:bg-zinc-900 border-zinc-800",
-                ].join(" ")}
-              >
-                Enviar dados
-              </button>
+              {/* ❌ removido botão Enviar dados */}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
@@ -514,18 +441,7 @@ export default function Dashboard() {
           <section className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4 mb-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="text-sm font-semibold">2) Uploads</div>
-              <button
-                onClick={enviarUploads}
-                disabled={ui.busy}
-                className={[
-                  "rounded-xl px-3 py-2 text-xs border",
-                  ui.busy
-                    ? "bg-zinc-900 border-zinc-800 opacity-60 cursor-not-allowed"
-                    : "bg-zinc-950 hover:bg-zinc-900 border-zinc-800",
-                ].join(" ")}
-              >
-                Enviar uploads
-              </button>
+              {/* ❌ removido botão Enviar uploads */}
             </div>
 
             {/* submenu */}
@@ -640,18 +556,7 @@ export default function Dashboard() {
           <section className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="text-sm font-semibold">3) Categorias e prateleiras</div>
-              <button
-                onClick={enviarCategorias}
-                disabled={ui.busy}
-                className={[
-                  "rounded-xl px-3 py-2 text-xs border",
-                  ui.busy
-                    ? "bg-zinc-900 border-zinc-800 opacity-60 cursor-not-allowed"
-                    : "bg-zinc-950 hover:bg-zinc-900 border-zinc-800",
-                ].join(" ")}
-              >
-                Enviar categorias
-              </button>
+              {/* ❌ removido botão Enviar categorias */}
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
@@ -723,6 +628,25 @@ export default function Dashboard() {
               Categorias selecionadas: {selecionadas.length}
             </div>
           </section>
+
+          {/* ✅ Botão ÚNICO no FINAL da página */}
+          <div className="mt-6 pb-10">
+            <button
+              onClick={gerarEmBlocos}
+              disabled={ui.busy}
+              className={[
+                "w-full rounded-2xl px-5 py-3 text-sm font-semibold border",
+                ui.busy
+                  ? "bg-zinc-900 border-zinc-800 opacity-60 cursor-not-allowed"
+                  : "bg-emerald-600/90 hover:bg-emerald-600 border-emerald-700",
+              ].join(" ")}
+            >
+              {ui.busy ? "Aguarde..." : "Gerar"}
+            </button>
+            <div className="text-xs text-zinc-500 mt-2">
+              Ao clicar em <b>Gerar</b>, o sistema envia tudo em blocos (mercado → uploads → categorias → gerar).
+            </div>
+          </div>
         </main>
       </div>
     </div>
