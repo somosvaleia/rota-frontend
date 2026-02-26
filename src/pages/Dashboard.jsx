@@ -86,10 +86,23 @@ export default function Dashboard() {
     [projetos, projetoIdAtual]
   );
 
-  function persist(nextProjetos, nextId = projetoIdAtual) {
-    localStorage.setItem("rota_projetos", JSON.stringify(nextProjetos));
-    localStorage.setItem("rota_projeto_atual", nextId);
-  }
+  function sanitizeForStorage(projetos) {
+  return projetos.map((p) => ({
+    ...p,
+    dados: {
+      ...p.dados,
+      // NÃO salvar File no localStorage
+      fotosLocal: [],
+      plantaBaixa: null,
+    },
+  }));
+}
+
+function persist(nextProjetos, nextId = projetoIdAtual) {
+  const safe = sanitizeForStorage(nextProjetos);
+  localStorage.setItem("rota_projetos", JSON.stringify(safe));
+  localStorage.setItem("rota_projeto_atual", nextId);
+}
 
   function criarProjeto() {
     const novo = {
