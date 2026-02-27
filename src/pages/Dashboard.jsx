@@ -44,9 +44,16 @@ function baseProjeto() {
     terrenoComprimento: "",
     terrenoLargura: "",
 
-    // uploads (NÃO persistir File no localStorage)
-    fotosLocal: [], // File[]
-    plantaBaixa: null, // File | null
+    // uploads (somente imagens) - NÃO persistir File no localStorage
+    logoMercado: null,      // File | null
+    plantaBaixa: null,      // File | null (imagem)
+    fotosAmbiente: [],      // File[] (múltiplas)
+
+    fotoA: null,            // File | null
+    fotoB: null,
+    fotoC: null,
+    fotoD: null,
+    fotoE: null,
 
     // submenu
     uploadTipo: "mercado", // mercado | gerar_ambiente | refazer_ambiente
@@ -68,8 +75,14 @@ function sanitizeForStorage(projetos) {
     ...p,
     dados: {
       ...p.dados,
-      fotosLocal: [],
+      logoMercado: null,
       plantaBaixa: null,
+      fotosAmbiente: [],
+      fotoA: null,
+      fotoB: null,
+      fotoC: null,
+      fotoD: null,
+      fotoE: null,
     },
   }));
 }
@@ -85,8 +98,14 @@ export default function Dashboard() {
         dados: {
           ...baseProjeto(),
           ...(p.dados || {}),
-          fotosLocal: [],
+          logoMercado: null,
           plantaBaixa: null,
+          fotosAmbiente: [],
+          fotoA: null,
+          fotoB: null,
+          fotoC: null,
+          fotoD: null,
+          fotoE: null,
         },
       }));
     }
@@ -218,16 +237,26 @@ export default function Dashboard() {
     const formData = new FormData();
     formData.append("data", JSON.stringify(payload));
 
-    // 👇 blindagem total: só anexa se for File
-    if (files.fotosLocal && Array.isArray(files.fotosLocal)) {
-      files.fotosLocal
-        .filter((f) => f instanceof File)
-        .forEach((file) => formData.append("fotosLocal", file, file.name));
+    // blindagem total: só anexa se for File
+    if (files.logoMercado instanceof File) {
+      formData.append("logoMercado", files.logoMercado, files.logoMercado.name);
     }
 
     if (files.plantaBaixa instanceof File) {
       formData.append("plantaBaixa", files.plantaBaixa, files.plantaBaixa.name);
     }
+
+    if (files.fotosAmbiente && Array.isArray(files.fotosAmbiente)) {
+      files.fotosAmbiente
+        .filter((f) => f instanceof File)
+        .forEach((file) => formData.append("fotosAmbiente", file, file.name));
+    }
+
+    if (files.fotoA instanceof File) formData.append("fotoA", files.fotoA, files.fotoA.name);
+    if (files.fotoB instanceof File) formData.append("fotoB", files.fotoB, files.fotoB.name);
+    if (files.fotoC instanceof File) formData.append("fotoC", files.fotoC, files.fotoC.name);
+    if (files.fotoD instanceof File) formData.append("fotoD", files.fotoD, files.fotoD.name);
+    if (files.fotoE instanceof File) formData.append("fotoE", files.fotoE, files.fotoE.name);
 
     const res = await fetch(WEBHOOK_URL, { method: "POST", body: formData });
     const text = await res.text();
@@ -244,7 +273,7 @@ export default function Dashboard() {
     );
   }
 
-  // ✅ botão único: envia “junto” mas em blocos (sequência)
+  // botão único: envia “junto” mas em blocos (sequência)
   async function gerarTudo() {
     const d = projetoAtual.dados;
 
@@ -253,11 +282,17 @@ export default function Dashboard() {
       return;
     }
 
-    const temArquivos =
-      (Array.isArray(d.fotosLocal) && d.fotosLocal.some((f) => f instanceof File)) ||
-      (d.plantaBaixa instanceof File);
-
     const catsSelecionadas = catsSelecionadasPayload();
+
+    const temArquivos =
+      (d.logoMercado instanceof File) ||
+      (d.plantaBaixa instanceof File) ||
+      (Array.isArray(d.fotosAmbiente) && d.fotosAmbiente.some((f) => f instanceof File)) ||
+      (d.fotoA instanceof File) ||
+      (d.fotoB instanceof File) ||
+      (d.fotoC instanceof File) ||
+      (d.fotoD instanceof File) ||
+      (d.fotoE instanceof File);
 
     setUi({ busy: true, ok: true, msg: "Gerando… enviando blocos pro n8n..." });
 
@@ -289,8 +324,14 @@ export default function Dashboard() {
             },
           },
           {
-            fotosLocal: Array.isArray(d.fotosLocal) ? d.fotosLocal : [],
+            logoMercado: d.logoMercado,
             plantaBaixa: d.plantaBaixa,
+            fotosAmbiente: Array.isArray(d.fotosAmbiente) ? d.fotosAmbiente : [],
+            fotoA: d.fotoA,
+            fotoB: d.fotoB,
+            fotoC: d.fotoC,
+            fotoD: d.fotoD,
+            fotoE: d.fotoE,
           }
         );
       }
@@ -324,7 +365,6 @@ export default function Dashboard() {
         categorias: catsSelecionadas,
       });
 
-      // ✅ mensagem enxuta: só sucesso
       setMsg(true, "Sucesso ✅ Pedido enviado pro n8n!");
     } catch (err) {
       console.error(err);
@@ -473,7 +513,7 @@ export default function Dashboard() {
 
           {/* 2) Uploads */}
           <section className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4 mb-4">
-            <div className="text-sm font-semibold">2) Uploads</div>
+            <div className="text-sm font-semibold">2) Uploads (somente imagens)</div>
 
             {/* submenu */}
             <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -540,33 +580,37 @@ export default function Dashboard() {
                 </>
               ) : (
                 <div className="md:col-span-3 text-xs text-zinc-500">
-                  Selecione o tipo acima e envie as fotos/planta abaixo.
+                  Selecione o tipo acima e envie as imagens abaixo.
                 </div>
               )}
             </div>
 
+            {/* novos campos */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">
-                  Fotos do local (pode subir várias)
-                </label>
+                <label className="block text-xs text-zinc-400 mb-1">Logo do mercado (imagem)</label>
                 <input
                   type="file"
-                  multiple
                   accept="image/*"
-                  onChange={(e) => updateDados({ fotosLocal: Array.from(e.target.files || []) })}
+                  onChange={(e) =>
+                    updateDados({
+                      logoMercado: (e.target.files && e.target.files[0]) || null,
+                    })
+                  }
                   className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm"
                 />
                 <div className="text-xs text-zinc-500 mt-1">
-                  Selecionadas: {projetoAtual.dados.fotosLocal?.length || 0}
+                  {projetoAtual.dados.logoMercado
+                    ? `Arquivo: ${projetoAtual.dados.logoMercado.name}`
+                    : "Nenhum arquivo selecionado"}
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">Planta baixa (se tiver)</label>
+                <label className="block text-xs text-zinc-400 mb-1">Planta baixa (imagem)</label>
                 <input
                   type="file"
-                  accept="image/*,application/pdf"
+                  accept="image/*"
                   onChange={(e) =>
                     updateDados({
                       plantaBaixa: (e.target.files && e.target.files[0]) || null,
@@ -580,6 +624,55 @@ export default function Dashboard() {
                     : "Nenhum arquivo selecionado"}
                 </div>
               </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs text-zinc-400 mb-1">
+                  Fotos do ambiente (múltiplas)
+                </label>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  onChange={(e) =>
+                    updateDados({ fotosAmbiente: Array.from(e.target.files || []) })
+                  }
+                  className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm"
+                />
+                <div className="text-xs text-zinc-500 mt-1">
+                  Selecionadas: {projetoAtual.dados.fotosAmbiente?.length || 0}
+                </div>
+              </div>
+
+              {[
+                ["fotoA", "Foto A"],
+                ["fotoB", "Foto B"],
+                ["fotoC", "Foto C"],
+                ["fotoD", "Foto D"],
+                ["fotoE", "Foto E"],
+              ].map(([key, label]) => (
+                <div key={key}>
+                  <label className="block text-xs text-zinc-400 mb-1">{label} (imagem)</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) =>
+                      updateDados({
+                        [key]: (e.target.files && e.target.files[0]) || null,
+                      })
+                    }
+                    className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm"
+                  />
+                  <div className="text-xs text-zinc-500 mt-1">
+                    {projetoAtual.dados[key]
+                      ? `Arquivo: ${projetoAtual.dados[key].name}`
+                      : "Nenhum arquivo selecionado"}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="text-xs text-zinc-500 mt-3">
+              Dica: se não tiver imagem, pode deixar vazio e só enviar os dados/categorias.
             </div>
           </section>
 
