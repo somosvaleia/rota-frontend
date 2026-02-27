@@ -40,12 +40,15 @@ function baseProjeto() {
     cidade: "",
     observacoes: "",
 
+    // medidas do terreno
     terrenoComprimento: "",
     terrenoLargura: "",
 
+    // uploads (NÃO persistir File no localStorage)
     fotosLocal: [], // File[]
     plantaBaixa: null, // File | null
 
+    // submenu
     uploadTipo: "mercado", // mercado | gerar_ambiente | refazer_ambiente
     ambienteRefazer: "geral", // geral | entrada | caixas | corredores | hortifruti | acougue | limpeza | outro
     ambienteOutro: "",
@@ -54,13 +57,39 @@ function baseProjeto() {
   };
 }
 
-// mantém como você já usa hoje
-const WEBHOOK_URL = "https://api.rota.valeia.space/webhook/rota/projeto";
+// usa env, com fallback
+const WEBHOOK_URL =
+  import.meta.env.VITE_N8N_WEBHOOK_URL ||
+  "https://api.rota.valeia.space/webhook/rota/projeto";
+
+function sanitizeForStorage(projetos) {
+  // NÃO salva File no localStorage (isso corrompe e quebra o FormData.append)
+  return projetos.map((p) => ({
+    ...p,
+    dados: {
+      ...p.dados,
+      fotosLocal: [],
+      plantaBaixa: null,
+    },
+  }));
+}
 
 export default function Dashboard() {
   const [projetos, setProjetos] = useState(() => {
     const saved = localStorage.getItem("rota_projetos");
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // garante que ao carregar, os arquivos não venham “corrompidos”
+      return parsed.map((p) => ({
+        ...p,
+        dados: {
+          ...baseProjeto(),
+          ...(p.dados || {}),
+          fotosLocal: [],
+          plantaBaixa: null,
+        },
+      }));
+    }
     return [
       {
         id: "p1",
@@ -86,23 +115,11 @@ export default function Dashboard() {
     [projetos, projetoIdAtual]
   );
 
-  function sanitizeForStorage(projetos) {
-  return projetos.map((p) => ({
-    ...p,
-    dados: {
-      ...p.dados,
-      // NÃO salvar File no localStorage
-      fotosLocal: [],
-      plantaBaixa: null,
-    },
-  }));
-}
-
-function persist(nextProjetos, nextId = projetoIdAtual) {
-  const safe = sanitizeForStorage(nextProjetos);
-  localStorage.setItem("rota_projetos", JSON.stringify(safe));
-  localStorage.setItem("rota_projeto_atual", nextId);
-}
+  function persist(nextProjetos, nextId = projetoIdAtual) {
+    const safe = sanitizeForStorage(nextProjetos);
+    localStorage.setItem("rota_projetos", JSON.stringify(safe));
+    localStorage.setItem("rota_projeto_atual", nextId);
+  }
 
   function criarProjeto() {
     const novo = {
@@ -193,7 +210,7 @@ function persist(nextProjetos, nextId = projetoIdAtual) {
       bloco, // "dados_mercado" | "uploads" | "categorias" | "gerar"
       projetoId: projetoAtual.id,
       projetoNome: projetoAtual.nome,
-      user: { email: "" }, // compatível
+      user: { email: "" },
     };
   }
 
@@ -201,10 +218,14 @@ function persist(nextProjetos, nextId = projetoIdAtual) {
     const formData = new FormData();
     formData.append("data", JSON.stringify(payload));
 
+    // 👇 blindagem total: só anexa se for File
     if (files.fotosLocal && Array.isArray(files.fotosLocal)) {
-      files.fotosLocal.forEach((file) => formData.append("fotosLocal", file, file.name));
+      files.fotosLocal
+        .filter((f) => f instanceof File)
+        .forEach((file) => formData.append("fotosLocal", file, file.name));
     }
-    if (files.plantaBaixa) {
+
+    if (files.plantaBaixa instanceof File) {
       formData.append("plantaBaixa", files.plantaBaixa, files.plantaBaixa.name);
     }
 
@@ -214,8 +235,17 @@ function persist(nextProjetos, nextId = projetoIdAtual) {
     return text;
   }
 
-  // ✅ ÚNICO ENVIO: manda tudo, mas em blocos (sequencial)
-  async function gerarEmBlocos() {
+  function catsSelecionadasPayload() {
+    const d = projetoAtual.dados;
+    return Object.fromEntries(
+      Object.entries(d.categorias)
+        .filter(([, v]) => v.enabled)
+        .map(([k, v]) => [k, { prateleiras: v.prateleiras, observacao: v.observacao }])
+    );
+  }
+
+  // ✅ botão único: envia “junto” mas em blocos (sequência)
+  async function gerarTudo() {
     const d = projetoAtual.dados;
 
     if (!d.nomeMercado?.trim()) {
@@ -223,93 +253,90 @@ function persist(nextProjetos, nextId = projetoIdAtual) {
       return;
     }
 
-    const catsSelecionadas = Object.fromEntries(
-      Object.entries(d.categorias)
-        .filter(([, v]) => v.enabled)
-        .map(([k, v]) => [k, { prateleiras: v.prateleiras, observacao: v.observacao }])
-    );
+    const temArquivos =
+      (Array.isArray(d.fotosLocal) && d.fotosLocal.some((f) => f instanceof File)) ||
+      (d.plantaBaixa instanceof File);
 
-    const payloadDadosMercado = {
-      ...buildBasePayload("dados_mercado"),
-      nomeMercado: d.nomeMercado,
-      cidade: d.cidade,
-      observacoes: d.observacoes,
-      terreno: {
-        comprimento_m: d.terrenoComprimento,
-        largura_m: d.terrenoLargura,
-      },
-    };
+    const catsSelecionadas = catsSelecionadasPayload();
 
-    const payloadUploads = {
-      ...buildBasePayload("uploads"),
-      uploads: {
-        tipo: d.uploadTipo,
-        ambiente: d.uploadTipo === "refazer_ambiente" ? d.ambienteRefazer : null,
-        ambiente_outro:
-          d.uploadTipo === "refazer_ambiente" && d.ambienteRefazer === "outro"
-            ? d.ambienteOutro
-            : null,
-      },
-    };
-
-    const payloadCategorias = {
-      ...buildBasePayload("categorias"),
-      categorias: catsSelecionadas,
-    };
-
-    const payloadGerar = {
-      ...buildBasePayload("gerar"),
-      nomeMercado: d.nomeMercado,
-      cidade: d.cidade,
-      observacoes: d.observacoes,
-      terreno: {
-        comprimento_m: d.terrenoComprimento,
-        largura_m: d.terrenoLargura,
-      },
-      uploads: {
-        tipo: d.uploadTipo,
-        ambiente: d.uploadTipo === "refazer_ambiente" ? d.ambienteRefazer : null,
-        ambiente_outro:
-          d.uploadTipo === "refazer_ambiente" && d.ambienteRefazer === "outro"
-            ? d.ambienteOutro
-            : null,
-      },
-      categorias: catsSelecionadas,
-    };
+    setUi({ busy: true, ok: true, msg: "Gerando… enviando blocos pro n8n..." });
 
     try {
-      setUi({ busy: true, ok: true, msg: "Enviando dados do mercado..." });
-      await postFormData(payloadDadosMercado);
-
-      // uploads só falha se tentar enviar sem nada? aqui a gente deixa enviar do mesmo jeito,
-      // mas se você quiser obrigar, descomenta o bloco abaixo.
-      // const temArquivos = (d.fotosLocal && d.fotosLocal.length > 0) || !!d.plantaBaixa;
-      // if (!temArquivos) throw new Error("Selecione ao menos uma foto ou planta baixa.");
-
-      setUi({ busy: true, ok: true, msg: "Enviando uploads..." });
-      await postFormData(payloadUploads, {
-        fotosLocal: d.fotosLocal || [],
-        plantaBaixa: d.plantaBaixa || null,
+      // 1) dados do mercado
+      await postFormData({
+        ...buildBasePayload("dados_mercado"),
+        nomeMercado: d.nomeMercado,
+        cidade: d.cidade,
+        observacoes: d.observacoes,
+        terreno: {
+          comprimento_m: d.terrenoComprimento,
+          largura_m: d.terrenoLargura,
+        },
       });
 
-      setUi({ busy: true, ok: true, msg: "Enviando categorias..." });
-      await postFormData(payloadCategorias);
+      // 2) uploads (se houver)
+      if (temArquivos) {
+        await postFormData(
+          {
+            ...buildBasePayload("uploads"),
+            uploads: {
+              tipo: d.uploadTipo,
+              ambiente: d.uploadTipo === "refazer_ambiente" ? d.ambienteRefazer : null,
+              ambiente_outro:
+                d.uploadTipo === "refazer_ambiente" && d.ambienteRefazer === "outro"
+                  ? d.ambienteOutro
+                  : null,
+            },
+          },
+          {
+            fotosLocal: Array.isArray(d.fotosLocal) ? d.fotosLocal : [],
+            plantaBaixa: d.plantaBaixa,
+          }
+        );
+      }
 
-      setUi({ busy: true, ok: true, msg: "Disparando geração..." });
-      await postFormData(payloadGerar);
+      // 3) categorias (se houver)
+      if (Object.keys(catsSelecionadas).length > 0) {
+        await postFormData({
+          ...buildBasePayload("categorias"),
+          categorias: catsSelecionadas,
+        });
+      }
 
-      setMsg(true, "Sucesso ✅");
+      // 4) disparo final “gerar”
+      await postFormData({
+        ...buildBasePayload("gerar"),
+        nomeMercado: d.nomeMercado,
+        cidade: d.cidade,
+        observacoes: d.observacoes,
+        terreno: {
+          comprimento_m: d.terrenoComprimento,
+          largura_m: d.terrenoLargura,
+        },
+        uploads: {
+          tipo: d.uploadTipo,
+          ambiente: d.uploadTipo === "refazer_ambiente" ? d.ambienteRefazer : null,
+          ambiente_outro:
+            d.uploadTipo === "refazer_ambiente" && d.ambienteRefazer === "outro"
+              ? d.ambienteOutro
+              : null,
+        },
+        categorias: catsSelecionadas,
+      });
+
+      // ✅ mensagem enxuta: só sucesso
+      setMsg(true, "Sucesso ✅ Pedido enviado pro n8n!");
     } catch (err) {
       console.error(err);
-      setMsg(false, "Deu erro no envio. Olha o console (F12) e o n8n (Executions).");
+      setMsg(false, "Deu erro ao enviar. Abre o console (F12) e me manda a linha do erro.");
     }
   }
 
   return (
     <div className="min-h-screen bg-black text-zinc-100">
-      <div className="flex">
+      <div className="flex flex-col md:flex-row">
         {/* Sidebar */}
-        <aside className="w-72 border-r border-zinc-900 bg-zinc-950/60">
+        <aside className="md:w-72 w-full border-b md:border-b-0 md:border-r border-zinc-900 bg-zinc-950/60">
           <div className="p-4">
             <div className="text-lg font-semibold">Rota</div>
             <div className="text-xs text-zinc-500">Projetos</div>
@@ -322,7 +349,7 @@ function persist(nextProjetos, nextId = projetoIdAtual) {
             + Novo projeto
           </button>
 
-          <div className="max-h-[calc(100vh-190px)] overflow-auto">
+          <div className="max-h-[280px] md:max-h-[calc(100vh-190px)] overflow-auto">
             {projetos.map((p) => (
               <button
                 key={p.id}
@@ -351,13 +378,10 @@ function persist(nextProjetos, nextId = projetoIdAtual) {
         </aside>
 
         {/* Área principal */}
-        <main className="flex-1 p-6">
+        <main className="flex-1 p-4 md:p-6 pb-28">
           {/* Cabeçalho */}
           <div className="mb-4 flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="text-xl font-semibold">Projeto</div>
-              {/* ❌ Removido botão aqui (vai pro final da página) */}
-            </div>
+            <div className="text-xl font-semibold">Projeto</div>
 
             {/* Mensagem inline */}
             {ui.msg ? (
@@ -389,10 +413,7 @@ function persist(nextProjetos, nextId = projetoIdAtual) {
 
           {/* 1) Dados do mercado */}
           <section className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4 mb-4">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="text-sm font-semibold">1) Dados do mercado</div>
-              {/* ❌ removido botão Enviar dados */}
-            </div>
+            <div className="text-sm font-semibold">1) Dados do mercado</div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
               <div className="md:col-span-2">
@@ -452,10 +473,7 @@ function persist(nextProjetos, nextId = projetoIdAtual) {
 
           {/* 2) Uploads */}
           <section className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4 mb-4">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="text-sm font-semibold">2) Uploads</div>
-              {/* ❌ removido botão Enviar uploads */}
-            </div>
+            <div className="text-sm font-semibold">2) Uploads</div>
 
             {/* submenu */}
             <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -567,10 +585,7 @@ function persist(nextProjetos, nextId = projetoIdAtual) {
 
           {/* 3) Categorias e prateleiras */}
           <section className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="text-sm font-semibold">3) Categorias e prateleiras</div>
-              {/* ❌ removido botão Enviar categorias */}
-            </div>
+            <div className="text-sm font-semibold">3) Categorias e prateleiras</div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
               {CATEGORIAS.map((c) => {
@@ -642,22 +657,25 @@ function persist(nextProjetos, nextId = projetoIdAtual) {
             </div>
           </section>
 
-          {/* ✅ Botão ÚNICO no FINAL da página */}
-          <div className="mt-6 pb-10">
-            <button
-              onClick={gerarEmBlocos}
-              disabled={ui.busy}
-              className={[
-                "w-full rounded-2xl px-5 py-3 text-sm font-semibold border",
-                ui.busy
-                  ? "bg-zinc-900 border-zinc-800 opacity-60 cursor-not-allowed"
-                  : "bg-emerald-600/90 hover:bg-emerald-600 border-emerald-700",
-              ].join(" ")}
-            >
-              {ui.busy ? "Aguarde..." : "Gerar"}
-            </button>
-            <div className="text-xs text-zinc-500 mt-2">
-              Ao clicar em <b>Gerar</b>, o sistema envia tudo em blocos (mercado → uploads → categorias → gerar).
+          {/* botão final fixo */}
+          <div className="fixed bottom-0 left-0 right-0 border-t border-zinc-900 bg-black/70 backdrop-blur">
+            <div className="max-w-[1200px] mx-auto p-3 flex items-center justify-between gap-3">
+              <div className="text-xs text-zinc-400">
+                {ui.busy ? "Processando…" : "Tudo pronto? Clique em Gerar."}
+              </div>
+
+              <button
+                onClick={gerarTudo}
+                disabled={ui.busy}
+                className={[
+                  "rounded-xl px-5 py-3 text-sm border font-semibold",
+                  ui.busy
+                    ? "bg-zinc-900 border-zinc-800 opacity-60 cursor-not-allowed"
+                    : "bg-emerald-600/90 hover:bg-emerald-600 border-emerald-700",
+                ].join(" ")}
+              >
+                {ui.busy ? "Aguarde..." : "Gerar"}
+              </button>
             </div>
           </div>
         </main>
