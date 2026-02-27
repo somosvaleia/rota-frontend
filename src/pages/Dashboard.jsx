@@ -44,21 +44,12 @@ function baseProjeto() {
     terrenoComprimento: "",
     terrenoLargura: "",
 
-    // uploads (somente imagens) - NÃO persistir File no localStorage
-    logoMercado: null,      // File | null
-    plantaBaixa: null,      // File | null (imagem)
-    fotosAmbiente: [],      // File[] (múltiplas)
-
-    fotoA: null,            // File | null
-    fotoB: null,
-    fotoC: null,
-    fotoD: null,
-    fotoE: null,
-
-    // submenu
-    uploadTipo: "mercado", // mercado | gerar_ambiente | refazer_ambiente
-    ambienteRefazer: "geral", // geral | entrada | caixas | corredores | hortifruti | acougue | limpeza | outro
-    ambienteOutro: "",
+    // uploads (somente IMAGENS, 1 por campo)
+    logo: null,   // File|null
+    planta: null, // File|null
+    campoC: null, // File|null
+    campoD: null, // File|null
+    campoE: null, // File|null
 
     categorias: emptyCategorias(),
   };
@@ -70,19 +61,16 @@ const WEBHOOK_URL =
   "https://api.rota.valeia.space/webhook/rota/projeto";
 
 function sanitizeForStorage(projetos) {
-  // NÃO salva File no localStorage (isso corrompe e quebra o FormData.append)
+  // NÃO salva File no localStorage (isso quebra tudo depois)
   return projetos.map((p) => ({
     ...p,
     dados: {
       ...p.dados,
-      logoMercado: null,
-      plantaBaixa: null,
-      fotosAmbiente: [],
-      fotoA: null,
-      fotoB: null,
-      fotoC: null,
-      fotoD: null,
-      fotoE: null,
+      logo: null,
+      planta: null,
+      campoC: null,
+      campoD: null,
+      campoE: null,
     },
   }));
 }
@@ -92,20 +80,17 @@ export default function Dashboard() {
     const saved = localStorage.getItem("rota_projetos");
     if (saved) {
       const parsed = JSON.parse(saved);
-      // garante que ao carregar, os arquivos não venham “corrompidos”
       return parsed.map((p) => ({
         ...p,
         dados: {
           ...baseProjeto(),
           ...(p.dados || {}),
-          logoMercado: null,
-          plantaBaixa: null,
-          fotosAmbiente: [],
-          fotoA: null,
-          fotoB: null,
-          fotoC: null,
-          fotoD: null,
-          fotoE: null,
+          // BLINDAGEM: sempre limpa files ao carregar
+          logo: null,
+          planta: null,
+          campoC: null,
+          campoD: null,
+          campoE: null,
         },
       }));
     }
@@ -123,11 +108,7 @@ export default function Dashboard() {
     return localStorage.getItem("rota_projeto_atual") || "p1";
   });
 
-  const [ui, setUi] = useState({
-    busy: false,
-    msg: "",
-    ok: true,
-  });
+  const [ui, setUi] = useState({ busy: false, msg: "", ok: true });
 
   const projetoAtual = useMemo(
     () => projetos.find((p) => p.id === projetoIdAtual) || projetos[0],
@@ -224,46 +205,6 @@ export default function Dashboard() {
     }, 4500);
   }
 
-  function buildBasePayload(bloco) {
-    return {
-      bloco, // "dados_mercado" | "uploads" | "categorias" | "gerar"
-      projetoId: projetoAtual.id,
-      projetoNome: projetoAtual.nome,
-      user: { email: "" },
-    };
-  }
-
-  async function postFormData(payload, files = {}) {
-    const formData = new FormData();
-    formData.append("data", JSON.stringify(payload));
-
-    // blindagem total: só anexa se for File
-    if (files.logoMercado instanceof File) {
-      formData.append("logoMercado", files.logoMercado, files.logoMercado.name);
-    }
-
-    if (files.plantaBaixa instanceof File) {
-      formData.append("plantaBaixa", files.plantaBaixa, files.plantaBaixa.name);
-    }
-
-    if (files.fotosAmbiente && Array.isArray(files.fotosAmbiente)) {
-      files.fotosAmbiente
-        .filter((f) => f instanceof File)
-        .forEach((file) => formData.append("fotosAmbiente", file, file.name));
-    }
-
-    if (files.fotoA instanceof File) formData.append("fotoA", files.fotoA, files.fotoA.name);
-    if (files.fotoB instanceof File) formData.append("fotoB", files.fotoB, files.fotoB.name);
-    if (files.fotoC instanceof File) formData.append("fotoC", files.fotoC, files.fotoC.name);
-    if (files.fotoD instanceof File) formData.append("fotoD", files.fotoD, files.fotoD.name);
-    if (files.fotoE instanceof File) formData.append("fotoE", files.fotoE, files.fotoE.name);
-
-    const res = await fetch(WEBHOOK_URL, { method: "POST", body: formData });
-    const text = await res.text();
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);
-    return text;
-  }
-
   function catsSelecionadasPayload() {
     const d = projetoAtual.dados;
     return Object.fromEntries(
@@ -273,7 +214,24 @@ export default function Dashboard() {
     );
   }
 
-  // botão único: envia “junto” mas em blocos (sequência)
+  async function postFormDataTudo(payload, files) {
+    const fd = new FormData();
+    fd.append("data", JSON.stringify(payload));
+
+    // chaves FIXAS (pra tu bater com o n8n sem sofrimento)
+    if (files.logo instanceof File) fd.append("logo", files.logo, files.logo.name);
+    if (files.planta instanceof File) fd.append("planta", files.planta, files.planta.name);
+    if (files.campoC instanceof File) fd.append("campoC", files.campoC, files.campoC.name);
+    if (files.campoD instanceof File) fd.append("campoD", files.campoD, files.campoD.name);
+    if (files.campoE instanceof File) fd.append("campoE", files.campoE, files.campoE.name);
+
+    const res = await fetch(WEBHOOK_URL, { method: "POST", body: fd });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);
+    return text;
+  }
+
+  // ✅ botão único: manda TUDO em 1 POST (e pronto)
   async function gerarTudo() {
     const d = projetoAtual.dados;
 
@@ -282,93 +240,48 @@ export default function Dashboard() {
       return;
     }
 
-    const catsSelecionadas = catsSelecionadasPayload();
+    setUi({ busy: true, ok: true, msg: "Enviando… (dados + imagens + categorias)" });
 
-    const temArquivos =
-      (d.logoMercado instanceof File) ||
-      (d.plantaBaixa instanceof File) ||
-      (Array.isArray(d.fotosAmbiente) && d.fotosAmbiente.some((f) => f instanceof File)) ||
-      (d.fotoA instanceof File) ||
-      (d.fotoB instanceof File) ||
-      (d.fotoC instanceof File) ||
-      (d.fotoD instanceof File) ||
-      (d.fotoE instanceof File);
+    const payload = {
+      bloco: "gerar",
+      projetoId: projetoAtual.id,
+      projetoNome: projetoAtual.nome,
+      user: { email: "" },
 
-    setUi({ busy: true, ok: true, msg: "Gerando… enviando blocos pro n8n..." });
+      nomeMercado: d.nomeMercado,
+      cidade: d.cidade,
+      observacoes: d.observacoes,
+
+      terreno: {
+        comprimento_m: d.terrenoComprimento,
+        largura_m: d.terrenoLargura,
+      },
+
+      categorias: catsSelecionadasPayload(),
+
+      // só pra debug/clareza do agente
+      uploads: {
+        logo: !!d.logo,
+        planta: !!d.planta,
+        campoC: !!d.campoC,
+        campoD: !!d.campoD,
+        campoE: !!d.campoE,
+      },
+    };
 
     try {
-      // 1) dados do mercado
-      await postFormData({
-        ...buildBasePayload("dados_mercado"),
-        nomeMercado: d.nomeMercado,
-        cidade: d.cidade,
-        observacoes: d.observacoes,
-        terreno: {
-          comprimento_m: d.terrenoComprimento,
-          largura_m: d.terrenoLargura,
-        },
+      await postFormDataTudo(payload, {
+        logo: d.logo,
+        planta: d.planta,
+        campoC: d.campoC,
+        campoD: d.campoD,
+        campoE: d.campoE,
       });
 
-      // 2) uploads (se houver)
-      if (temArquivos) {
-        await postFormData(
-          {
-            ...buildBasePayload("uploads"),
-            uploads: {
-              tipo: d.uploadTipo,
-              ambiente: d.uploadTipo === "refazer_ambiente" ? d.ambienteRefazer : null,
-              ambiente_outro:
-                d.uploadTipo === "refazer_ambiente" && d.ambienteRefazer === "outro"
-                  ? d.ambienteOutro
-                  : null,
-            },
-          },
-          {
-            logoMercado: d.logoMercado,
-            plantaBaixa: d.plantaBaixa,
-            fotosAmbiente: Array.isArray(d.fotosAmbiente) ? d.fotosAmbiente : [],
-            fotoA: d.fotoA,
-            fotoB: d.fotoB,
-            fotoC: d.fotoC,
-            fotoD: d.fotoD,
-            fotoE: d.fotoE,
-          }
-        );
-      }
-
-      // 3) categorias (se houver)
-      if (Object.keys(catsSelecionadas).length > 0) {
-        await postFormData({
-          ...buildBasePayload("categorias"),
-          categorias: catsSelecionadas,
-        });
-      }
-
-      // 4) disparo final “gerar”
-      await postFormData({
-        ...buildBasePayload("gerar"),
-        nomeMercado: d.nomeMercado,
-        cidade: d.cidade,
-        observacoes: d.observacoes,
-        terreno: {
-          comprimento_m: d.terrenoComprimento,
-          largura_m: d.terrenoLargura,
-        },
-        uploads: {
-          tipo: d.uploadTipo,
-          ambiente: d.uploadTipo === "refazer_ambiente" ? d.ambienteRefazer : null,
-          ambiente_outro:
-            d.uploadTipo === "refazer_ambiente" && d.ambienteRefazer === "outro"
-              ? d.ambienteOutro
-              : null,
-        },
-        categorias: catsSelecionadas,
-      });
-
-      setMsg(true, "Sucesso ✅ Pedido enviado pro n8n!");
+      setMsg(true, "Sucesso ✅ Enviado pro n8n!");
     } catch (err) {
       console.error(err);
-      setMsg(false, "Deu erro ao enviar. Abre o console (F12) e me manda a linha do erro.");
+      setMsg(false, "Deu erro no envio. Abre o console (F12) e me manda a linha do erro.");
     }
   }
 
@@ -419,11 +332,9 @@ export default function Dashboard() {
 
         {/* Área principal */}
         <main className="flex-1 p-4 md:p-6 pb-28">
-          {/* Cabeçalho */}
           <div className="mb-4 flex flex-col gap-3">
             <div className="text-xl font-semibold">Projeto</div>
 
-            {/* Mensagem inline */}
             {ui.msg ? (
               <div
                 className={[
@@ -504,175 +415,83 @@ export default function Dashboard() {
                   className="w-full min-h-24 rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-700"
                   placeholder="Ex: Quero um layout moderno, com ilha promocional na entrada..."
                 />
-                <div className="text-xs text-zinc-500 mt-2">
-                  Se não souber as medidas exatas, bota aproximado. Isso já ajuda o agente demais.
-                </div>
               </div>
             </div>
           </section>
 
-          {/* 2) Uploads */}
+          {/* 2) Uploads (A-E, 1 imagem por campo) */}
           <section className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4 mb-4">
-            <div className="text-sm font-semibold">2) Uploads (somente imagens)</div>
+            <div className="text-sm font-semibold">2) Uploads (1 imagem por campo)</div>
 
-            {/* submenu */}
-            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="md:col-span-3">
-                <label className="block text-xs text-zinc-400 mb-2">Tipo de upload</label>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { v: "mercado", t: "Mercado (fotos do local)" },
-                    { v: "gerar_ambiente", t: "Geração do ambiente" },
-                    { v: "refazer_ambiente", t: "Refazer ambiente" },
-                  ].map((opt) => (
-                    <button
-                      key={opt.v}
-                      type="button"
-                      onClick={() => updateDados({ uploadTipo: opt.v })}
-                      className={[
-                        "rounded-xl px-3 py-2 text-xs border",
-                        projetoAtual.dados.uploadTipo === opt.v
-                          ? "bg-emerald-600/20 border-emerald-800 text-emerald-200"
-                          : "bg-zinc-950 border-zinc-800 hover:bg-zinc-900",
-                      ].join(" ")}
-                    >
-                      {opt.t}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {projetoAtual.dados.uploadTipo === "refazer_ambiente" ? (
-                <>
-                  <div className="md:col-span-2">
-                    <label className="block text-xs text-zinc-400 mb-1">Qual ambiente você quer refazer?</label>
-                    <select
-                      value={projetoAtual.dados.ambienteRefazer}
-                      onChange={(e) => updateDados({ ambienteRefazer: e.target.value })}
-                      className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-700"
-                    >
-                      <option value="geral">Geral</option>
-                      <option value="entrada">Entrada</option>
-                      <option value="caixas">Caixas</option>
-                      <option value="corredores">Corredores</option>
-                      <option value="hortifruti">Hortifruti</option>
-                      <option value="acougue">Açougue</option>
-                      <option value="limpeza">Limpeza</option>
-                      <option value="outro">Outro</option>
-                    </select>
-                  </div>
-
-                  {projetoAtual.dados.ambienteRefazer === "outro" ? (
-                    <div>
-                      <label className="block text-xs text-zinc-400 mb-1">Especifica</label>
-                      <input
-                        value={projetoAtual.dados.ambienteOutro}
-                        onChange={(e) => updateDados({ ambienteOutro: e.target.value })}
-                        className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-700"
-                        placeholder="Ex: corredor de bebidas"
-                      />
-                    </div>
-                  ) : (
-                    <div className="text-xs text-zinc-500 flex items-end">
-                      Dica: manda fotos só do ambiente alvo, se puder.
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div className="md:col-span-3 text-xs text-zinc-500">
-                  Selecione o tipo acima e envie as imagens abaixo.
-                </div>
-              )}
-            </div>
-
-            {/* novos campos */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">Logo do mercado (imagem)</label>
+                <label className="block text-xs text-zinc-400 mb-1">Campo A — Logo</label>
                 <input
                   type="file"
                   accept="image/*"
-                  onChange={(e) =>
-                    updateDados({
-                      logoMercado: (e.target.files && e.target.files[0]) || null,
-                    })
-                  }
+                  onChange={(e) => updateDados({ logo: (e.target.files && e.target.files[0]) || null })}
                   className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm"
                 />
                 <div className="text-xs text-zinc-500 mt-1">
-                  {projetoAtual.dados.logoMercado
-                    ? `Arquivo: ${projetoAtual.dados.logoMercado.name}`
-                    : "Nenhum arquivo selecionado"}
+                  {projetoAtual.dados.logo ? `Arquivo: ${projetoAtual.dados.logo.name}` : "Nenhuma imagem selecionada"}
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">Planta baixa (imagem)</label>
+                <label className="block text-xs text-zinc-400 mb-1">Campo B — Planta baixa</label>
                 <input
                   type="file"
                   accept="image/*"
-                  onChange={(e) =>
-                    updateDados({
-                      plantaBaixa: (e.target.files && e.target.files[0]) || null,
-                    })
-                  }
+                  onChange={(e) => updateDados({ planta: (e.target.files && e.target.files[0]) || null })}
                   className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm"
                 />
                 <div className="text-xs text-zinc-500 mt-1">
-                  {projetoAtual.dados.plantaBaixa
-                    ? `Arquivo: ${projetoAtual.dados.plantaBaixa.name}`
-                    : "Nenhum arquivo selecionado"}
+                  {projetoAtual.dados.planta ? `Arquivo: ${projetoAtual.dados.planta.name}` : "Nenhuma imagem selecionada"}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1">Campo C — Imagem</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => updateDados({ campoC: (e.target.files && e.target.files[0]) || null })}
+                  className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm"
+                />
+                <div className="text-xs text-zinc-500 mt-1">
+                  {projetoAtual.dados.campoC ? `Arquivo: ${projetoAtual.dados.campoC.name}` : "Nenhuma imagem selecionada"}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1">Campo D — Imagem</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => updateDados({ campoD: (e.target.files && e.target.files[0]) || null })}
+                  className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm"
+                />
+                <div className="text-xs text-zinc-500 mt-1">
+                  {projetoAtual.dados.campoD ? `Arquivo: ${projetoAtual.dados.campoD.name}` : "Nenhuma imagem selecionada"}
                 </div>
               </div>
 
               <div className="md:col-span-2">
-                <label className="block text-xs text-zinc-400 mb-1">
-                  Fotos do ambiente (múltiplas)
-                </label>
+                <label className="block text-xs text-zinc-400 mb-1">Campo E — Imagem</label>
                 <input
                   type="file"
-                  multiple
                   accept="image/*"
-                  onChange={(e) =>
-                    updateDados({ fotosAmbiente: Array.from(e.target.files || []) })
-                  }
+                  onChange={(e) => updateDados({ campoE: (e.target.files && e.target.files[0]) || null })}
                   className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm"
                 />
                 <div className="text-xs text-zinc-500 mt-1">
-                  Selecionadas: {projetoAtual.dados.fotosAmbiente?.length || 0}
+                  {projetoAtual.dados.campoE ? `Arquivo: ${projetoAtual.dados.campoE.name}` : "Nenhuma imagem selecionada"}
                 </div>
               </div>
 
-              {[
-                ["fotoA", "Foto A"],
-                ["fotoB", "Foto B"],
-                ["fotoC", "Foto C"],
-                ["fotoD", "Foto D"],
-                ["fotoE", "Foto E"],
-              ].map(([key, label]) => (
-                <div key={key}>
-                  <label className="block text-xs text-zinc-400 mb-1">{label} (imagem)</label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) =>
-                      updateDados({
-                        [key]: (e.target.files && e.target.files[0]) || null,
-                      })
-                    }
-                    className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm"
-                  />
-                  <div className="text-xs text-zinc-500 mt-1">
-                    {projetoAtual.dados[key]
-                      ? `Arquivo: ${projetoAtual.dados[key].name}`
-                      : "Nenhum arquivo selecionado"}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="text-xs text-zinc-500 mt-3">
-              Dica: se não tiver imagem, pode deixar vazio e só enviar os dados/categorias.
+              <div className="md:col-span-2 text-xs text-zinc-500">
+                No n8n, as chaves vão chegar exatamente assim: <b>logo</b>, <b>planta</b>, <b>campoC</b>, <b>campoD</b>, <b>campoE</b>.
+              </div>
             </div>
           </section>
 
@@ -684,56 +503,39 @@ export default function Dashboard() {
               {CATEGORIAS.map((c) => {
                 const v = projetoAtual.dados.categorias[c.key];
                 return (
-                  <div
-                    key={c.key}
-                    className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3"
-                  >
+                  <div key={c.key} className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
                     <label className="flex items-start gap-3 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={!!v.enabled}
-                        onChange={(e) =>
-                          updateCategoria(c.key, { enabled: e.target.checked })
-                        }
+                        onChange={(e) => updateCategoria(c.key, { enabled: e.target.checked })}
                         className="mt-1"
                       />
                       <div>
                         <div className="text-sm font-medium">{c.label}</div>
-                        <div className="text-xs text-zinc-500">
-                          Marque se essa categoria vai existir no mercado.
-                        </div>
+                        <div className="text-xs text-zinc-500">Marque se essa categoria vai existir no mercado.</div>
                       </div>
                     </label>
 
                     {v.enabled ? (
                       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
                         <div>
-                          <label className="block text-xs text-zinc-400 mb-1">
-                            Qtde de prateleiras/gôndolas
-                          </label>
+                          <label className="block text-xs text-zinc-400 mb-1">Qtde de prateleiras/gôndolas</label>
                           <input
                             type="number"
                             min={0}
                             value={v.prateleiras}
-                            onChange={(e) =>
-                              updateCategoria(c.key, {
-                                prateleiras: Number(e.target.value || 0),
-                              })
-                            }
+                            onChange={(e) => updateCategoria(c.key, { prateleiras: Number(e.target.value || 0) })}
                             className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-700"
                             placeholder="Ex: 4"
                           />
                         </div>
 
                         <div>
-                          <label className="block text-xs text-zinc-400 mb-1">
-                            Observação
-                          </label>
+                          <label className="block text-xs text-zinc-400 mb-1">Observação</label>
                           <input
                             value={v.observacao}
-                            onChange={(e) =>
-                              updateCategoria(c.key, { observacao: e.target.value })
-                            }
+                            onChange={(e) => updateCategoria(c.key, { observacao: e.target.value })}
                             className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-700"
                             placeholder="Ex: perto do caixa"
                           />
